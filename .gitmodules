@@ -1,0 +1,9 @@
+[submodule "submodules/BayesOpt_Attack"]
+	path = submodules/BayesOpt_Attack
+	url = https://github.com/rubinxin/BayesOpt_Attack.git
+[submodule "submodules/pytorch-playground"]
+	path = submodules/pytorch-playground
+	url = https://github.com/aaron-xichen/pytorch-playground.git
+[submodule "submodules/pytorch_playground"]
+	path = submodules/pytorch_playground
+	url = https://github.com/aaron-xichen/pytorch-playground.git
