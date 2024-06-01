@@ -1,0 +1,12 @@
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==2.1.2+cu118
+torchvision==0.16.2+cu118
+matplotlib==3.8.4
+GPy
+GPyOpt
+pyDOE
+pillow
+numpy
+opencv-python
+scipy
+IPython
