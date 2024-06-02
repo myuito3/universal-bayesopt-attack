@@ -8,6 +8,36 @@ from submodules.BayesOpt_Attack.utilities.upsampler import upsample_projection
 from submodules.BayesOpt_Attack.utilities.utilities import get_init_data
 
 
+def zero_one_loss(logits, gt_class):
+    pred_class = torch.argmax(logits, dim=-1)
+    loss = torch.count_nonzero(pred_class != gt_class)
+    return loss
+
+
+def tile_upsample_projection(
+    dim_reduction, X_low, low_dim, high_dim, nchannel=1, align_corners=True
+):
+    n = X_low.shape[0]
+    sqrt_low_dim = int(np.sqrt(low_dim))
+    sqrt_high_dim = int(np.sqrt(high_dim))
+    X_low_2d = X_low.reshape(n, nchannel, sqrt_low_dim, sqrt_low_dim)
+
+    # repeat tile to match image size
+    rep = sqrt_high_dim // sqrt_low_dim
+    rest = sqrt_high_dim % sqrt_low_dim
+    uni_noise = np.tile(X_low_2d, (1, rep, rep))
+    rest_w = np.tile(X_low_2d[:, :, :rest, :], (1, 1, rep))
+    rest_h = np.tile(X_low_2d[:, :, :, :rest], (1, rep, 1))
+    rest_hw = X_low_2d[:, :, :rest, :rest]
+    uni_noise = np.concatenate([uni_noise, rest_w], axis=2)
+    rest_hhw = np.concatenate([rest_h, rest_hw], axis=2)
+    uni_noise = np.concatenate([uni_noise, rest_hhw], axis=3)
+    uni_noise = np.stack([uni_noise])
+
+    X_high = uni_noise.reshape(X_low.shape[0], high_dim * nchannel)
+    return X_high
+
+
 class UniversalBayesOptAttack:
     """
     Args:
@@ -36,9 +66,9 @@ class UniversalBayesOptAttack:
         high_dim,
         low_dim,
         eps,
+        input_shape,
         num_train_images=10,
         setting="score",
-        targeted=False,
         max_iters=10000,
         model_type="GP",
         acq_type="LCB",
@@ -57,6 +87,7 @@ class UniversalBayesOptAttack:
         self.d1 = d1
         self.high_dim = high_dim
         self.eps = eps
+        self.input_shape = input_shape
         self.model_type = model_type
         self.acq_type = acq_type
         self.batch_size = batch_size
@@ -74,7 +105,16 @@ class UniversalBayesOptAttack:
         self.bayes_iter = int(
             (max_iters - (n_init * num_train_images)) / num_train_images
         )
-        self.loss_fn = nn.CrossEntropyLoss()
+
+        if setting == "score":
+            self.loss_fn = nn.CrossEntropyLoss()
+        elif setting == "decision":
+            self.loss_fn = zero_one_loss
+
+        if dim_reduction == "Tile":
+            self.upsample_fn = tile_upsample_projection
+        else:
+            self.upsample_fn = upsample_projection
 
     def np_evaluate(self, delta_vector_np):
         """
@@ -95,7 +135,7 @@ class UniversalBayesOptAttack:
         """
 
         delta_vector_np = delta_vector_ld_np * self.eps
-        delta_vector_hg_np = upsample_projection(
+        delta_vector_hg_np = self.upsample_fn(
             self.dim_reduction,
             delta_vector_np,
             self.low_dim,
@@ -115,8 +155,9 @@ class UniversalBayesOptAttack:
         """
 
         # Add adversarial delta to the original image
-        delta = delta_vector.reshape(-1, self.d1, self.d1, self.nchannel).squeeze(-1)
-        delta = torch.from_numpy(delta)
+        delta = delta_vector.reshape(-1, self.nchannel, self.d1, self.d1).squeeze()
+        delta = delta[None, ...]
+        delta = torch.from_numpy(delta).float()
 
         loss_batch = []
         with torch.no_grad():
@@ -127,9 +168,12 @@ class UniversalBayesOptAttack:
                     y_train = y_train.to(self.device)
 
                     loss = -1 * self.loss_fn(
-                        self.model(x_adv.view(x_adv.shape[0], -1)), y_train
+                        self.model(x_adv.view(x_adv.shape[0], *self.input_shape)),
+                        y_train,
                     )
-                    loss = torch.exp(loss)
+                    loss = torch.exp(
+                        loss
+                    )  # because the optimization process of BayesOpt operates with score values of 0 or higher
                     loss_batch.append([np.sum(loss.cpu().numpy())])
 
                     self.num_query += x_adv.shape[0]
@@ -196,7 +240,7 @@ class UniversalBayesOptAttack:
         if self.dim_reduction == "NONE":
             X_h_opt = X_opt
         else:
-            X_h_opt = upsample_projection(
+            X_h_opt = self.upsample_fn(
                 self.dim_reduction,
                 X_opt,
                 low_dim=self.low_dim,
@@ -204,6 +248,6 @@ class UniversalBayesOptAttack:
                 nchannel=self.nchannel,
             )
 
-        delta = X_h_opt[-1].reshape(-1, self.d1, self.d1, self.nchannel) * self.eps
+        delta = X_h_opt[-1].reshape(-1, self.nchannel, self.d1, self.d1) * self.eps
 
         return delta, self.num_query
