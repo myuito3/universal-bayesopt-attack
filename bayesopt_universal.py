@@ -25,16 +25,16 @@ def tile_upsample_projection(
     # repeat tile to match image size
     rep = sqrt_high_dim // sqrt_low_dim
     rest = sqrt_high_dim % sqrt_low_dim
-    uni_noise = np.tile(X_low_2d, (1, rep, rep))
+    delta = np.tile(X_low_2d, (1, rep, rep))
     rest_w = np.tile(X_low_2d[:, :, :rest, :], (1, 1, rep))
     rest_h = np.tile(X_low_2d[:, :, :, :rest], (1, rep, 1))
     rest_hw = X_low_2d[:, :, :rest, :rest]
-    uni_noise = np.concatenate([uni_noise, rest_w], axis=2)
+    delta = np.concatenate([delta, rest_w], axis=2)
     rest_hhw = np.concatenate([rest_h, rest_hw], axis=2)
-    uni_noise = np.concatenate([uni_noise, rest_hhw], axis=3)
-    uni_noise = np.stack([uni_noise])
+    delta = np.concatenate([delta, rest_hhw], axis=3)
+    delta = np.stack([delta])
 
-    X_high = uni_noise.reshape(X_low.shape[0], high_dim * nchannel)
+    X_high = delta.reshape(X_low.shape[0], high_dim * nchannel)
     return X_high
 
 
@@ -229,25 +229,16 @@ class UniversalBayesOptAttack:
             total_iterations=i_total
         )
 
-        # Reduce the memory needed for storing results
-        if "LDR" in self.model_type:
-            X_query = X_query_full[-2:]
-            X_opt = X_opt_full[-2:]
-        else:
-            X_query = X_query_full
-            X_opt = X_opt_full[-2:]
-
-        if self.dim_reduction == "NONE":
-            X_h_opt = X_opt
-        else:
-            X_h_opt = self.upsample_fn(
+        X_opt_best = X_opt_full[-1:]
+        if self.dim_reduction != "NONE":
+            X_opt_best = self.upsample_fn(
                 self.dim_reduction,
-                X_opt,
+                X_opt_best,
                 low_dim=self.low_dim,
                 high_dim=self.high_dim,
                 nchannel=self.nchannel,
             )
 
-        delta = X_h_opt[-1].reshape(-1, self.nchannel, self.d1, self.d1) * self.eps
+        delta = X_opt_best.reshape(-1, self.nchannel, self.d1, self.d1) * self.eps
 
         return delta, self.num_query
